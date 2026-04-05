@@ -179,9 +179,27 @@ export default function IndicatorExplorer() {
           <div className="flex justify-between items-center mb-8">
             <div>
               <h3 className="text-xs uppercase tracking-widest font-bold text-on-surface-variant mb-1">
-                Price Action
+                Price Action + Indicators
               </h3>
-              <p className="text-sm font-medium">{symbol} Adjusted Close</p>
+              <div className="flex items-center gap-4 mt-1">
+                <p className="text-sm font-medium">{symbol} Adjusted Close</p>
+                {activeIndicators.size > 0 && (
+                  <div className="flex items-center gap-3">
+                    <span className="text-on-surface-variant/40">|</span>
+                    {[...activeIndicators].map((key) => (
+                      <div key={key} className="flex items-center gap-1.5">
+                        <div
+                          className="w-2 h-2 rounded-full"
+                          style={{ backgroundColor: INDICATOR_META[key].color }}
+                        />
+                        <span className="text-[10px] font-mono uppercase tracking-wider text-on-surface-variant">
+                          {INDICATOR_META[key].label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <div className="h-[400px] w-full">
@@ -209,6 +227,14 @@ export default function IndicatorExplorer() {
                     stroke="#566166"
                     domain={["auto", "auto"]}
                   />
+                  {activeIndicators.size > 0 && (
+                    <YAxis
+                      yAxisId="indicator"
+                      orientation="right"
+                      hide
+                      domain={["auto", "auto"]}
+                    />
+                  )}
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "rgba(255,255,255,0.95)",
@@ -223,9 +249,11 @@ export default function IndicatorExplorer() {
                       if (payload?.[0]?.payload?.fullDate) return payload[0].payload.fullDate;
                       return "";
                     }}
-                    formatter={(value) =>
-                      typeof value === "number" ? value.toFixed(4) : value
-                    }
+                    formatter={(value, name) => {
+                      if (typeof value !== "number") return value;
+                      if (name === "Price") return `$${value.toFixed(2)}`;
+                      return value.toFixed(4);
+                    }}
                   />
                   <Line
                     yAxisId="price"
@@ -236,6 +264,20 @@ export default function IndicatorExplorer() {
                     dot={false}
                     name="Price"
                   />
+                  {[...activeIndicators].map((key) => (
+                    <Line
+                      key={key}
+                      yAxisId="indicator"
+                      type="monotone"
+                      dataKey={key}
+                      stroke={INDICATOR_META[key].color}
+                      strokeWidth={1.5}
+                      strokeOpacity={0.7}
+                      dot={false}
+                      name={INDICATOR_META[key].label}
+                      connectNulls
+                    />
+                  ))}
                 </LineChart>
               </ResponsiveContainer>
             )}
