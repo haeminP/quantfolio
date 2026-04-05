@@ -14,6 +14,48 @@ import {
 
 const API_BASE = "http://localhost:8000";
 
+const MODEL_INFO: Record<string, { name: string; icon: string; description: string; strength: string; weakness: string }> = {
+  dt: {
+    name: "Decision Tree",
+    icon: "account_tree",
+    description:
+      "Splits data by selecting the feature most correlated with the target value, using the median as the split point. Builds a binary tree recursively until leaf size or uniform targets are reached.",
+    strength: "Optimal splits produce stable, low-error predictions with smooth degradation as leaf size increases.",
+    weakness: "Prone to overfitting at small leaf sizes — the model memorizes training noise instead of learning the trend.",
+  },
+  rt: {
+    name: "Random Tree",
+    icon: "shuffle",
+    description:
+      "Same tree structure as Decision Tree, but randomly selects the split feature instead of computing correlations. Trades prediction accuracy for training speed.",
+    strength: "Significantly faster training, especially on large datasets, since it skips correlation computation.",
+    weakness: "Random feature selection can lead to higher and more variable prediction error (MAE) compared to Decision Tree.",
+  },
+  bag: {
+    name: "Bagged Learner",
+    icon: "stacks",
+    description:
+      "Bootstrap Aggregating — trains multiple Decision Trees on random subsets of data, then averages their predictions. Reduces variance by combining diverse models.",
+    strength: "Mitigates overfitting by averaging out individual tree variance. The train-test RMSE gap narrows notably at small leaf sizes.",
+    weakness: "Cannot eliminate overfitting entirely — fundamental bias and data noise persist. Also increases computation time linearly with bag count.",
+  },
+};
+
+const LEARNING_CURVE_TIPS: Record<string, { title: string; body: string }> = {
+  dt: {
+    title: "Reading This Chart",
+    body: "The X-axis shows leaf size (model complexity). At leaf size 1, the tree perfectly memorizes training data (train RMSE near 0), but test RMSE spikes — this is overfitting. As leaf size increases, the model simplifies: train error rises but test error drops. The highlighted region marks the optimal leaf size where test error is minimized.",
+  },
+  rt: {
+    title: "Why Is It Noisier?",
+    body: "Random Tree picks split features randomly, so the learning curve is less smooth than Decision Tree. You may see unexpected jumps in error — that's a random split hitting an irrelevant feature. Despite higher variance, RT trains faster, making it useful when speed matters more than precision.",
+  },
+  bag: {
+    title: "Bagging Effect",
+    body: "Compare this chart to the single Decision Tree. Notice how the gap between train and test RMSE narrows? That's bagging reducing variance by averaging multiple trees. However, overfitting isn't fully eliminated — at very small leaf sizes, test error still rises slightly. Try increasing the number of bags to see the effect.",
+  },
+};
+
 type ExperimentResult = {
   leaf_size: number;
   train_rmse: number;
@@ -313,7 +355,45 @@ export default function LearnerPlayground() {
             </div>
           </div>
 
-          {/* Tip Card */}
+          {/* Model Description Card */}
+          <div className="bg-surface-container-lowest p-6 rounded-xl shadow-sm border border-outline-variant/10">
+            <div className="flex items-center gap-3 mb-4">
+              <span
+                className="material-symbols-outlined text-primary"
+                style={{ fontVariationSettings: "'FILL' 1" }}
+              >
+                {MODEL_INFO[learnerType].icon}
+              </span>
+              <h4 className="text-sm font-bold text-on-surface">
+                {MODEL_INFO[learnerType].name}
+              </h4>
+            </div>
+            <p className="text-xs text-on-surface-variant leading-relaxed mb-4">
+              {MODEL_INFO[learnerType].description}
+            </p>
+            <div className="space-y-3">
+              <div className="flex gap-2">
+                <span className="material-symbols-outlined text-secondary text-sm mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>
+                  check_circle
+                </span>
+                <p className="text-xs text-on-surface-variant leading-relaxed">
+                  <strong className="text-on-surface">Strength:</strong>{" "}
+                  {MODEL_INFO[learnerType].strength}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <span className="material-symbols-outlined text-error text-sm mt-0.5" style={{ fontVariationSettings: "'FILL' 1" }}>
+                  warning
+                </span>
+                <p className="text-xs text-on-surface-variant leading-relaxed">
+                  <strong className="text-on-surface">Weakness:</strong>{" "}
+                  {MODEL_INFO[learnerType].weakness}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Learning Curve Tip */}
           <div className="bg-surface-container-lowest p-6 rounded-xl shadow-sm border border-outline-variant/10">
             <div className="flex items-center gap-3 mb-4">
               <span
@@ -323,14 +403,11 @@ export default function LearnerPlayground() {
                 info
               </span>
               <h4 className="text-sm font-bold text-on-surface">
-                Learner Tip
+                {LEARNING_CURVE_TIPS[learnerType].title}
               </h4>
             </div>
             <p className="text-xs text-on-surface-variant leading-relaxed">
-              A small <strong>leaf size</strong> leads to overfitting (low train
-              error, high test error). As leaf size grows, the model
-              generalizes better. The sweet spot is where test error is
-              minimized — highlighted in the chart.
+              {LEARNING_CURVE_TIPS[learnerType].body}
             </p>
           </div>
         </div>
