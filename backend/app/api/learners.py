@@ -24,11 +24,17 @@ def _load_dataset(name: str) -> np.ndarray:
     return data
 
 
+# Learner types that don't accept leaf_size (no tree structure)
+_NO_LEAF_SIZE = {"linreg", "insane"}
+
+
 def _create_learner(learner_type: str, leaf_size: int, bags: int):
     learner_cls, is_bag = get_learner_class(learner_type)
     if is_bag:
         BagLearner = get_bag_learner()
         return BagLearner(learner=learner_cls, kwargs={"leaf_size": leaf_size}, bags=bags)
+    if learner_type in _NO_LEAF_SIZE:
+        return learner_cls()
     return learner_cls(leaf_size=leaf_size)
 
 
@@ -52,21 +58,34 @@ def run_experiment(
         x_test, y_test = data[split:, :-1], data[split:, -1]
 
         results = []
-        for ls in range(1, max_leaf_size + 1):
-            learner = _create_learner(learner_type, ls, bags)
-            learner.add_evidence(x_train, y_train)
 
+        if learner_type in _NO_LEAF_SIZE:
+            # Non-tree learners: train once, show as flat baseline
+            learner = _create_learner(learner_type, 0, bags)
+            learner.add_evidence(x_train, y_train)
             train_pred = learner.query(x_train)
             test_pred = learner.query(x_test)
-
             train_rmse = float(np.sqrt(np.mean((y_train - train_pred) ** 2)))
             test_rmse = float(np.sqrt(np.mean((y_test - test_pred) ** 2)))
-
-            results.append({
-                "leaf_size": ls,
-                "train_rmse": round(train_rmse, 6),
-                "test_rmse": round(test_rmse, 6),
-            })
+            for ls in range(1, max_leaf_size + 1):
+                results.append({
+                    "leaf_size": ls,
+                    "train_rmse": round(train_rmse, 6),
+                    "test_rmse": round(test_rmse, 6),
+                })
+        else:
+            for ls in range(1, max_leaf_size + 1):
+                learner = _create_learner(learner_type, ls, bags)
+                learner.add_evidence(x_train, y_train)
+                train_pred = learner.query(x_train)
+                test_pred = learner.query(x_test)
+                train_rmse = float(np.sqrt(np.mean((y_train - train_pred) ** 2)))
+                test_rmse = float(np.sqrt(np.mean((y_test - test_pred) ** 2)))
+                results.append({
+                    "leaf_size": ls,
+                    "train_rmse": round(train_rmse, 6),
+                    "test_rmse": round(test_rmse, 6),
+                })
 
         best = min(results, key=lambda r: r["test_rmse"])
 

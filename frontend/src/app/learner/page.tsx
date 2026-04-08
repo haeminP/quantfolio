@@ -14,7 +14,7 @@ import {
 
 const API_BASE = "http://localhost:8000";
 
-const MODEL_INFO: Record<string, { name: string; icon: string; description: string; strength: string; weakness: string }> = {
+const MODEL_INFO: Record<string, { name: string; icon: string; description: string; strength: string; weakness: string; hasLeafSize: boolean }> = {
   dt: {
     name: "Decision Tree",
     icon: "account_tree",
@@ -22,6 +22,7 @@ const MODEL_INFO: Record<string, { name: string; icon: string; description: stri
       "Splits data by selecting the feature most correlated with the target value, using the median as the split point. Builds a binary tree recursively until leaf size or uniform targets are reached.",
     strength: "Optimal splits produce stable, low-error predictions with smooth degradation as leaf size increases.",
     weakness: "Prone to overfitting at small leaf sizes — the model memorizes training noise instead of learning the trend.",
+    hasLeafSize: true,
   },
   rt: {
     name: "Random Tree",
@@ -30,6 +31,7 @@ const MODEL_INFO: Record<string, { name: string; icon: string; description: stri
       "Same tree structure as Decision Tree, but randomly selects the split feature instead of computing correlations. Trades prediction accuracy for training speed.",
     strength: "Significantly faster training, especially on large datasets, since it skips correlation computation.",
     weakness: "Random feature selection can lead to higher and more variable prediction error (MAE) compared to Decision Tree.",
+    hasLeafSize: true,
   },
   bag: {
     name: "Bagged Learner",
@@ -38,6 +40,25 @@ const MODEL_INFO: Record<string, { name: string; icon: string; description: stri
       "Bootstrap Aggregating — trains multiple Decision Trees on random subsets of data, then averages their predictions. Reduces variance by combining diverse models.",
     strength: "Mitigates overfitting by averaging out individual tree variance. The train-test RMSE gap narrows notably at small leaf sizes.",
     weakness: "Cannot eliminate overfitting entirely — fundamental bias and data noise persist. Also increases computation time linearly with bag count.",
+    hasLeafSize: true,
+  },
+  linreg: {
+    name: "Linear Regression",
+    icon: "timeline",
+    description:
+      "Fits a linear hyperplane to the data using least-squares optimization (np.linalg.lstsq). No tree structure — the model finds the best-fit coefficients that minimize squared error across all features.",
+    strength: "Extremely fast training, no hyperparameters to tune, and zero risk of overfitting to noise. Serves as a strong baseline.",
+    weakness: "Assumes a linear relationship between features and target. Cannot capture non-linear patterns, leading to high bias on complex datasets.",
+    hasLeafSize: false,
+  },
+  insane: {
+    name: "Insane Learner",
+    icon: "neurology",
+    description:
+      "Meta-ensemble of 20 BagLearners, each containing 20 LinRegLearners — 400 total models. Averages predictions across all learners to reduce variance to the absolute minimum.",
+    strength: "Massive ensemble averaging virtually eliminates variance. Demonstrates the theoretical power of ensemble methods at scale.",
+    weakness: "400× slower than a single LinRegLearner, yet barely improves RMSE — linear models can't overcome linearity bias no matter how many you combine.",
+    hasLeafSize: false,
   },
 };
 
@@ -53,6 +74,14 @@ const LEARNING_CURVE_TIPS: Record<string, { title: string; body: string }> = {
   bag: {
     title: "Bagging Effect",
     body: "Compare this chart to the single Decision Tree. Notice how the gap between train and test RMSE narrows? That's bagging reducing variance by averaging multiple trees. However, overfitting isn't fully eliminated — at very small leaf sizes, test error still rises slightly. Try increasing the number of bags to see the effect.",
+  },
+  linreg: {
+    title: "Why Are the Lines Flat?",
+    body: "Linear Regression has no leaf size parameter — it always fits the same linear model regardless of the X-axis value. The flat lines represent the model's fixed performance. Compare this baseline to tree-based learners: if a DT's test RMSE dips below LinReg's line, the tree is capturing non-linear patterns that linear regression misses.",
+  },
+  insane: {
+    title: "400 Models, Same Bias",
+    body: "Insane Learner combines 400 LinRegLearners (20 bags × 20 learners). Notice the lines are nearly identical to plain Linear Regression — adding more linear models can't fix linearity bias. This is a textbook example of the bias-variance tradeoff: ensemble methods reduce variance but cannot reduce bias. The computation cost is 400× higher for negligible improvement.",
   },
 };
 
@@ -290,6 +319,8 @@ export default function LearnerPlayground() {
                     <option value="dt">Decision Tree</option>
                     <option value="rt">Random Tree</option>
                     <option value="bag">Bagged Learner</option>
+                    <option value="linreg">Linear Regression</option>
+                    <option value="insane">Insane Learner</option>
                   </select>
                   <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant">
                     expand_more
@@ -297,25 +328,27 @@ export default function LearnerPlayground() {
                 </div>
               </div>
 
-              {/* Max Leaf Size Slider */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <label className="text-[0.6875rem] font-bold uppercase tracking-widest text-on-surface-variant">
-                    Max Leaf Size
-                  </label>
-                  <span className="font-mono text-sm font-bold text-primary">
-                    {maxLeafSize}
-                  </span>
+              {/* Max Leaf Size Slider — only for tree-based learners */}
+              {MODEL_INFO[learnerType].hasLeafSize && (
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <label className="text-[0.6875rem] font-bold uppercase tracking-widest text-on-surface-variant">
+                      Max Leaf Size
+                    </label>
+                    <span className="font-mono text-sm font-bold text-primary">
+                      {maxLeafSize}
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="5"
+                    max="100"
+                    value={maxLeafSize}
+                    onChange={(e) => setMaxLeafSize(Number(e.target.value))}
+                    className="w-full h-1.5 bg-surface-container-highest rounded-full appearance-none cursor-pointer accent-primary"
+                  />
                 </div>
-                <input
-                  type="range"
-                  min="5"
-                  max="100"
-                  value={maxLeafSize}
-                  onChange={(e) => setMaxLeafSize(Number(e.target.value))}
-                  className="w-full h-1.5 bg-surface-container-highest rounded-full appearance-none cursor-pointer accent-primary"
-                />
-              </div>
+              )}
 
               {/* Number of Bags Slider */}
               {learnerType === "bag" && (

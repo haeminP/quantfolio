@@ -34,6 +34,12 @@ def get_learner_class(learner_type: str):
     elif learner_type == "bag":
         from DTLearner import DTLearner
         return DTLearner, True
+    elif learner_type == "linreg":
+        from LinRegLearner import LinRegLearner
+        return LinRegLearner, False
+    elif learner_type == "insane":
+        from InsaneLearner import InsaneLearner
+        return InsaneLearner, False
     else:
         raise ValueError(f"Unknown learner type: {learner_type}")
 
