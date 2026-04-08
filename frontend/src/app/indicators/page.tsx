@@ -2,8 +2,10 @@
 
 import { useState, useEffect } from "react";
 import {
+  ComposedChart,
   LineChart,
   Line,
+  Scatter,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -21,39 +23,85 @@ type IndicatorKey = "bbp" | "momentum" | "sma" | "macd" | "stochastic";
 
 const INDICATOR_META: Record<
   IndicatorKey,
-  { label: string; color: string; description: string }
+  { label: string; color: string; description: string; signal: string }
 > = {
   bbp: {
     label: "Bollinger Band %",
     color: "#565e74",
     description:
-      "Measures where the price sits relative to Bollinger Bands. Above 1.0 = overbought, below 0.0 = oversold.",
+      "Measures where the price sits relative to upper and lower Bollinger Bands (SMA +/- 2 standard deviations, 20-day window). Quantifies overbought/oversold conditions at precise price levels.",
+    signal: "BUY when BBP < 0 (oversold, price below lower band) | SELL when BBP > 1 (overbought, price above upper band)",
   },
   sma: {
     label: "Price / SMA",
     color: "#605c78",
     description:
-      "Ratio of current price to its Simple Moving Average. Above 1.0 = price above trend, below 1.0 = price below trend.",
+      "Ratio of current price to its 20-day Simple Moving Average. SMA filters out noise to reveal the underlying trend. A large diversion from SMA suggests a mean-reversion opportunity.",
+    signal: "BUY when ratio < 0.95 (price significantly below trend) | SELL when ratio > 1.05 (price significantly above trend)",
   },
   momentum: {
     label: "Momentum",
     color: "#006b62",
     description:
-      "Rate of price change over the lookback period. Positive = uptrend, negative = downtrend.",
+      "Rate of price change relative to N days ago (10-day lookback). Shows when the rate of change is accelerating — the strategy is 'buy high, sell higher' or 'sell low, buy lower'.",
+    signal: "BUY when momentum crosses above 0 (uptrend starts) | SELL when momentum crosses below 0 (downtrend starts)",
   },
   macd: {
     label: "MACD",
     color: "#9f403d",
     description:
-      "Moving Average Convergence Divergence — measures the relationship between two EMAs. Crossovers signal trend changes.",
+      "Difference between 12-day and 26-day EMA. The MACD histogram (MACD line minus 9-day signal line) reveals trend direction and momentum strength. Effective for identifying trend reversals.",
+    signal: "BUY when MACD crosses above 0 (bullish crossover) | SELL when MACD crosses below 0 (bearish crossover)",
   },
   stochastic: {
     label: "Stochastic %K",
     color: "#4a5268",
     description:
-      "Compares closing price to its price range over the lookback period. Above 80 = overbought, below 20 = oversold.",
+      "Shows where the closing price stands relative to the high-low range over 14 days. Based on the assumption that prices close near highs in uptrends and near lows in downtrends.",
+    signal: "BUY when %K < 20 (oversold) | SELL when %K > 80 (overbought)",
   },
 };
+
+// Signal detection functions based on P6 report trading rules
+function computeSignals(
+  chartData: Record<string, string | number | null>[],
+  activeIndicators: Set<IndicatorKey>
+): { buyIndices: Set<number>; sellIndices: Set<number> } {
+  const buyIndices = new Set<number>();
+  const sellIndices = new Set<number>();
+
+  for (let i = 1; i < chartData.length; i++) {
+    for (const key of activeIndicators) {
+      const curr = chartData[i][key] as number | null;
+      const prev = chartData[i - 1][key] as number | null;
+      if (curr === null || prev === null) continue;
+
+      switch (key) {
+        case "bbp":
+          if (curr < 0) buyIndices.add(i);
+          if (curr > 1) sellIndices.add(i);
+          break;
+        case "sma":
+          if (curr < 0.95) buyIndices.add(i);
+          if (curr > 1.05) sellIndices.add(i);
+          break;
+        case "momentum":
+          if (prev < 0 && curr >= 0) buyIndices.add(i);
+          if (prev > 0 && curr <= 0) sellIndices.add(i);
+          break;
+        case "macd":
+          if (prev < 0 && curr >= 0) buyIndices.add(i);
+          if (prev > 0 && curr <= 0) sellIndices.add(i);
+          break;
+        case "stochastic":
+          if (curr < 20) buyIndices.add(i);
+          if (curr > 80) sellIndices.add(i);
+          break;
+      }
+    }
+  }
+  return { buyIndices, sellIndices };
+}
 
 type ApiResponse = {
   dates: string[];
@@ -69,6 +117,19 @@ export default function IndicatorExplorer() {
   const [activeIndicators, setActiveIndicators] = useState<Set<IndicatorKey>>(
     new Set(["bbp", "momentum"])
   );
+  const [showSignals, setShowSignals] = useState(true);
+  const [focusedIndicator, setFocusedIndicator] = useState<IndicatorKey | null>("bbp");
+  const [startDate, setStartDate] = useState("2008-01-01");
+  const [endDate, setEndDate] = useState("2009-12-31");
+
+  const DATE_PRESETS: { label: string; start: string; end: string }[] = [
+    { label: "2008", start: "2008-01-01", end: "2008-12-31" },
+    { label: "2009", start: "2009-01-01", end: "2009-12-31" },
+    { label: "08–09", start: "2008-01-01", end: "2009-12-31" },
+    { label: "2010", start: "2010-01-01", end: "2010-12-31" },
+    { label: "2011", start: "2011-01-01", end: "2011-12-31" },
+    { label: "All", start: "2000-01-01", end: "2012-12-31" },
+  ];
 
   // Fetch available symbols on mount
   useEffect(() => {
@@ -82,7 +143,7 @@ export default function IndicatorExplorer() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ symbol, start: "2008-01-01", end: "2009-12-31" });
+      const params = new URLSearchParams({ symbol, start: startDate, end: endDate });
       const allIndicators: IndicatorKey[] = ["bbp", "momentum", "sma", "macd", "stochastic"];
       allIndicators.forEach((i) => params.append("indicators", i));
       const res = await fetch(`${API_BASE}/api/indicators/calculate?${params}`);
@@ -95,11 +156,11 @@ export default function IndicatorExplorer() {
     }
   };
 
-  // Fetch on mount and symbol change
+  // Fetch on mount and when symbol or date range changes
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol]);
+  }, [symbol, startDate, endDate]);
 
   const toggleIndicator = (key: IndicatorKey) => {
     setActiveIndicators((prev) => {
@@ -111,10 +172,10 @@ export default function IndicatorExplorer() {
   };
 
   // Build chart data
-  const chartData = data
+  const rawChartData = data
     ? data.dates.map((date, i) => {
         const point: Record<string, string | number | null> = {
-          date: date.slice(5), // MM-DD format
+          date: startDate.slice(0, 4) !== endDate.slice(0, 4) ? date.slice(2, 10) : date.slice(5), // YY-MM-DD if multi-year, else MM-DD
           fullDate: date,
           price: data.prices[i],
         };
@@ -125,6 +186,14 @@ export default function IndicatorExplorer() {
         return point;
       })
     : [];
+
+  // Compute signals and add to chart data
+  const { buyIndices, sellIndices } = computeSignals(rawChartData, activeIndicators);
+  const chartData = rawChartData.map((point, i) => ({
+    ...point,
+    buySignal: showSignals && buyIndices.has(i) ? point.price : null,
+    sellSignal: showSignals && sellIndices.has(i) ? point.price : null,
+  }));
 
   const latestPrice = data ? data.prices[data.prices.length - 1] : null;
   const prevPrice = data && data.prices.length > 1 ? data.prices[data.prices.length - 2] : null;
@@ -175,7 +244,7 @@ export default function IndicatorExplorer() {
       {/* Main Grid */}
       <div className="grid grid-cols-12 gap-6">
         {/* Price Chart */}
-        <div className="col-span-12 lg:col-span-9 bg-surface-container-lowest rounded-xl p-8 shadow-sm border border-outline-variant/10">
+        <div className="col-span-12 lg:col-span-9 self-start bg-surface-container-lowest rounded-xl p-8 shadow-sm border border-outline-variant/10">
           <div className="flex justify-between items-center mb-8">
             <div>
               <h3 className="text-xs uppercase tracking-widest font-bold text-on-surface-variant mb-1">
@@ -209,7 +278,7 @@ export default function IndicatorExplorer() {
               </div>
             ) : (
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData}>
+                <ComposedChart data={chartData}>
                   <CartesianGrid
                     strokeDasharray="3 3"
                     stroke="#a9b4b9"
@@ -227,14 +296,12 @@ export default function IndicatorExplorer() {
                     stroke="#566166"
                     domain={["auto", "auto"]}
                   />
-                  {activeIndicators.size > 0 && (
-                    <YAxis
-                      yAxisId="indicator"
-                      orientation="right"
-                      hide
-                      domain={["auto", "auto"]}
-                    />
-                  )}
+                  <YAxis
+                    yAxisId="indicator"
+                    orientation="right"
+                    hide
+                    domain={["auto", "auto"]}
+                  />
                   <Tooltip
                     contentStyle={{
                       backgroundColor: "rgba(255,255,255,0.95)",
@@ -252,6 +319,7 @@ export default function IndicatorExplorer() {
                     formatter={(value, name) => {
                       if (typeof value !== "number") return value;
                       if (name === "Price") return `$${value.toFixed(2)}`;
+                      if (name === "BUY Signal" || name === "SELL Signal") return `$${value.toFixed(2)}`;
                       return value.toFixed(4);
                     }}
                   />
@@ -278,7 +346,27 @@ export default function IndicatorExplorer() {
                       connectNulls
                     />
                   ))}
-                </LineChart>
+                  {showSignals && (
+                    <>
+                      <Scatter
+                        yAxisId="price"
+                        dataKey="buySignal"
+                        name="BUY Signal"
+                        fill="#006b62"
+                        shape="triangle"
+                        legendType="none"
+                      />
+                      <Scatter
+                        yAxisId="price"
+                        dataKey="sellSignal"
+                        name="SELL Signal"
+                        fill="#9f403d"
+                        shape="diamond"
+                        legendType="none"
+                      />
+                    </>
+                  )}
+                </ComposedChart>
               </ResponsiveContainer>
             )}
           </div>
@@ -310,6 +398,56 @@ export default function IndicatorExplorer() {
             </div>
           </div>
 
+          {/* Date Range */}
+          <div className="bg-surface-container-low rounded-xl p-6">
+            <h3 className="text-xs uppercase tracking-widest font-bold text-on-surface-variant mb-4 flex items-center gap-2">
+              <span className="material-symbols-outlined text-sm">date_range</span>
+              Period
+            </h3>
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {DATE_PRESETS.map((p) => {
+                const isActive = startDate === p.start && endDate === p.end;
+                return (
+                  <button
+                    key={p.label}
+                    onClick={() => { setStartDate(p.start); setEndDate(p.end); }}
+                    className={`px-2.5 py-1.5 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+                      isActive
+                        ? "bg-primary text-white shadow-sm shadow-primary/20"
+                        : "bg-surface-container-highest text-on-surface-variant hover:bg-surface-container-high"
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-on-surface-variant mb-1">
+                  From
+                </label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="w-full bg-surface-container-highest border-none rounded-lg py-2 px-2.5 text-[11px] font-mono focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+              <div>
+                <label className="block text-[9px] font-bold uppercase tracking-widest text-on-surface-variant mb-1">
+                  To
+                </label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="w-full bg-surface-container-highest border-none rounded-lg py-2 px-2.5 text-[11px] font-mono focus:ring-2 focus:ring-primary/30"
+                />
+              </div>
+            </div>
+          </div>
+
           {/* Indicator Toggles */}
           <div className="bg-surface-container-low rounded-xl p-6">
             <h3 className="text-xs uppercase tracking-widest font-bold text-on-surface-variant mb-6 flex items-center gap-2">
@@ -318,59 +456,106 @@ export default function IndicatorExplorer() {
               </span>
               Indicators
             </h3>
-            <div className="space-y-4">
+            <div className="space-y-1">
               {(Object.entries(INDICATOR_META) as [IndicatorKey, typeof INDICATOR_META.bbp][]).map(
                 ([key, meta]) => (
-                  <label
+                  <div
                     key={key}
-                    className="flex items-center gap-3 cursor-pointer group"
+                    className={`flex items-center gap-3 rounded-lg px-2.5 py-2 transition-all cursor-pointer ${
+                      focusedIndicator === key
+                        ? "bg-primary-container/40"
+                        : "hover:bg-surface-container-highest/60"
+                    }`}
+                    onClick={() => setFocusedIndicator(focusedIndicator === key ? null : key)}
                   >
                     <input
                       type="checkbox"
                       checked={activeIndicators.has(key)}
-                      onChange={() => toggleIndicator(key)}
-                      className="w-4 h-4 rounded border-none bg-surface-container-highest text-primary focus:ring-0"
+                      onChange={(e) => { e.stopPropagation(); toggleIndicator(key); }}
+                      onClick={(e) => e.stopPropagation()}
+                      className="w-4 h-4 rounded border-none bg-surface-container-highest text-primary focus:ring-0 cursor-pointer"
                     />
                     <div className="flex items-center gap-2 flex-1">
                       <div
                         className="w-2.5 h-2.5 rounded-full"
                         style={{ backgroundColor: meta.color }}
                       />
-                      <span className="text-sm font-medium text-on-surface">
+                      <span className={`text-sm font-medium transition-colors ${
+                        focusedIndicator === key ? "text-primary" : "text-on-surface"
+                      }`}>
                         {meta.label}
                       </span>
                     </div>
-                  </label>
+                    {focusedIndicator === key && (
+                      <span className="material-symbols-outlined text-primary text-sm">
+                        chevron_right
+                      </span>
+                    )}
+                  </div>
                 )
+              )}
+            </div>
+
+            {/* Signal Toggle */}
+            <div className="mt-6 pt-6 border-t border-outline-variant/20">
+              <label className="flex items-center justify-between cursor-pointer">
+                <div className="flex items-center gap-2">
+                  <span className="material-symbols-outlined text-sm text-on-surface-variant">
+                    candlestick_chart
+                  </span>
+                  <span className="text-xs font-bold uppercase tracking-widest text-on-surface-variant">
+                    Show Signals
+                  </span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="checkbox"
+                    checked={showSignals}
+                    onChange={(e) => setShowSignals(e.target.checked)}
+                    className="sr-only"
+                  />
+                  <div className={`w-9 h-5 rounded-full transition-colors ${showSignals ? "bg-secondary" : "bg-surface-container-highest"}`}>
+                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transform transition-transform mt-0.5 ${showSignals ? "translate-x-[18px]" : "translate-x-0.5"}`} />
+                  </div>
+                </div>
+              </label>
+              {showSignals && (
+                <div className="mt-3 flex items-center gap-4 text-[10px] text-on-surface-variant">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[6px] border-b-secondary" />
+                    <span>BUY</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2.5 h-2.5 bg-error rotate-45" />
+                    <span>SELL</span>
+                  </div>
+                </div>
               )}
             </div>
           </div>
 
-          {/* Active Indicator Info */}
-          {activeIndicators.size > 0 && (
+          {/* Focused Indicator Info */}
+          {focusedIndicator && (
             <div className="bg-surface-container-lowest p-6 rounded-xl shadow-sm border border-outline-variant/10">
               <div className="flex items-center gap-3 mb-4">
-                <span
-                  className="material-symbols-outlined text-secondary"
-                  style={{ fontVariationSettings: "'FILL' 1" }}
-                >
-                  info
-                </span>
+                <div
+                  className="w-3 h-3 rounded-full"
+                  style={{ backgroundColor: INDICATOR_META[focusedIndicator].color }}
+                />
                 <h4 className="text-sm font-bold text-on-surface">
-                  Indicator Guide
+                  {INDICATOR_META[focusedIndicator].label}
                 </h4>
               </div>
-              <div className="space-y-3">
-                {[...activeIndicators].map((key) => (
-                  <div key={key}>
-                    <p className="text-xs leading-relaxed text-on-surface-variant">
-                      <strong className="text-on-surface">
-                        {INDICATOR_META[key].label}:
-                      </strong>{" "}
-                      {INDICATOR_META[key].description}
-                    </p>
-                  </div>
-                ))}
+              <p className="text-xs leading-relaxed text-on-surface-variant mb-3">
+                {INDICATOR_META[focusedIndicator].description}
+              </p>
+              <div className="space-y-1.5">
+                <p className="text-[9px] font-bold uppercase tracking-widest text-on-surface-variant">
+                  Signal Rule
+                </p>
+                <p className="text-[10px] leading-relaxed text-on-surface-variant font-mono bg-surface-container-low rounded-lg px-3 py-2">
+                  {INDICATOR_META[focusedIndicator].signal}
+                </p>
               </div>
             </div>
           )}
@@ -435,16 +620,19 @@ export default function IndicatorExplorer() {
                         }
                       />
                       <Bar dataKey="macd" name="MACD">
-                        {chartData.slice(-60).map((entry, i) => (
-                          <Cell
-                            key={i}
-                            fill={
-                              (entry.macd as number) >= 0
-                                ? "rgba(0,107,98,0.6)"
-                                : "rgba(159,64,61,0.6)"
-                            }
-                          />
-                        ))}
+                        {chartData.slice(-60).map((entry, i) => {
+                          const val = (entry as Record<string, unknown>).macd as number ?? 0;
+                          return (
+                            <Cell
+                              key={i}
+                              fill={
+                                val >= 0
+                                  ? "rgba(0,107,98,0.6)"
+                                  : "rgba(159,64,61,0.6)"
+                              }
+                            />
+                          );
+                        })}
                       </Bar>
                     </BarChart>
                   </ResponsiveContainer>
