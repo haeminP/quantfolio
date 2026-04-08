@@ -12,13 +12,14 @@ def calculate_indicators(
     start: str = Query(default="2008-01-01"),
     end: str = Query(default="2009-12-31"),
     indicators: list[str] = Query(default=["bbp", "momentum", "macd"]),
+    source: str = Query(default="auto"),
 ):
     try:
         from app.services.ml4t_bridge import load_prices, create_indicators
 
         sd = datetime.strptime(start, "%Y-%m-%d")
         ed = datetime.strptime(end, "%Y-%m-%d")
-        prices = load_prices(symbol, sd, ed)
+        prices = load_prices(symbol, sd, ed, source=source)
         ind = create_indicators(prices)
 
         result = {"dates": prices.index.strftime("%Y-%m-%d").tolist()}
@@ -54,3 +55,20 @@ def list_symbols():
         if not f.stem.startswith("$")
     ])
     return {"symbols": symbols}
+
+
+@router.get("/search")
+def search_symbol(q: str = Query(min_length=1)):
+    """Search for a ticker symbol via Yahoo Finance."""
+    import yfinance as yf
+    try:
+        search = yf.Search(q, max_results=8)
+        return {
+            "results": [
+                {"symbol": r["symbol"], "name": r.get("shortname", r.get("longname", ""))}
+                for r in search.quotes
+                if r.get("quoteType") in ("EQUITY", "ETF", "INDEX")
+            ]
+        }
+    except Exception:
+        return {"results": []}

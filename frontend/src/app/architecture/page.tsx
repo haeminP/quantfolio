@@ -105,7 +105,7 @@ const LAYERS: {
       },
       {
         name: "Yahoo Finance API",
-        role: "Live market data (planned)",
+        role: "Live market data via yfinance",
         why: "Extends the dashboard beyond course data to real-time analysis. Same indicator pipeline, different data source — the abstraction in load_prices() makes this a drop-in replacement.",
       },
     ],

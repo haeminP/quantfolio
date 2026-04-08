@@ -121,8 +121,12 @@ export default function IndicatorExplorer() {
   const [focusedIndicator, setFocusedIndicator] = useState<IndicatorKey | null>("bbp");
   const [startDate, setStartDate] = useState("2008-01-01");
   const [endDate, setEndDate] = useState("2009-12-31");
+  const [dataSource, setDataSource] = useState<"csv" | "yahoo">("csv");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<{ symbol: string; name: string }[]>([]);
+  const [searching, setSearching] = useState(false);
 
-  const DATE_PRESETS: { label: string; start: string; end: string }[] = [
+  const CSV_PRESETS: { label: string; start: string; end: string }[] = [
     { label: "2008", start: "2008-01-01", end: "2008-12-31" },
     { label: "2009", start: "2009-01-01", end: "2009-12-31" },
     { label: "08–09", start: "2008-01-01", end: "2009-12-31" },
@@ -131,7 +135,17 @@ export default function IndicatorExplorer() {
     { label: "All", start: "2000-01-01", end: "2012-12-31" },
   ];
 
-  // Fetch available symbols on mount
+  const YAHOO_PRESETS: { label: string; start: string; end: string }[] = [
+    { label: "1M", start: new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10), end: new Date().toISOString().slice(0, 10) },
+    { label: "3M", start: new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10), end: new Date().toISOString().slice(0, 10) },
+    { label: "6M", start: new Date(Date.now() - 180 * 86400000).toISOString().slice(0, 10), end: new Date().toISOString().slice(0, 10) },
+    { label: "1Y", start: new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10), end: new Date().toISOString().slice(0, 10) },
+    { label: "5Y", start: new Date(Date.now() - 5 * 365 * 86400000).toISOString().slice(0, 10), end: new Date().toISOString().slice(0, 10) },
+  ];
+
+  const DATE_PRESETS = dataSource === "csv" ? CSV_PRESETS : YAHOO_PRESETS;
+
+  // Fetch available CSV symbols on mount
   useEffect(() => {
     fetch(`${API_BASE}/api/indicators/symbols`)
       .then((r) => r.json())
@@ -139,11 +153,49 @@ export default function IndicatorExplorer() {
       .catch(() => {});
   }, []);
 
+  // Search Yahoo Finance symbols (debounced)
+  useEffect(() => {
+    if (dataSource !== "yahoo" || searchQuery.length < 1) {
+      setSearchResults([]);
+      return;
+    }
+    setSearching(true);
+    const timer = setTimeout(() => {
+      fetch(`${API_BASE}/api/indicators/search?q=${encodeURIComponent(searchQuery)}`)
+        .then((r) => r.json())
+        .then((d) => setSearchResults(d.results || []))
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearching(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery, dataSource]);
+
+  // Reset defaults when switching data source
+  const switchSource = (src: "csv" | "yahoo") => {
+    setDataSource(src);
+    if (src === "csv") {
+      setSymbol("JPM");
+      setStartDate("2008-01-01");
+      setEndDate("2009-12-31");
+    } else {
+      setSymbol("AAPL");
+      setStartDate(new Date(Date.now() - 365 * 86400000).toISOString().slice(0, 10));
+      setEndDate(new Date().toISOString().slice(0, 10));
+    }
+    setSearchQuery("");
+    setSearchResults([]);
+  };
+
   // Fetch indicator data
   const fetchData = async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ symbol, start: startDate, end: endDate });
+      const params = new URLSearchParams({
+        symbol,
+        start: startDate,
+        end: endDate,
+        source: dataSource,
+      });
       const allIndicators: IndicatorKey[] = ["bbp", "momentum", "sma", "macd", "stochastic"];
       allIndicators.forEach((i) => params.append("indicators", i));
       const res = await fetch(`${API_BASE}/api/indicators/calculate?${params}`);
@@ -156,11 +208,11 @@ export default function IndicatorExplorer() {
     }
   };
 
-  // Fetch on mount and when symbol or date range changes
+  // Fetch on mount and when symbol, date range, or source changes
   useEffect(() => {
     fetchData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, startDate, endDate]);
+  }, [symbol, startDate, endDate, dataSource]);
 
   const toggleIndicator = (key: IndicatorKey) => {
     setActiveIndicators((prev) => {
@@ -374,28 +426,93 @@ export default function IndicatorExplorer() {
 
         {/* Controls Panel */}
         <div className="col-span-12 lg:col-span-3 space-y-6">
-          {/* Symbol Selector */}
+          {/* Data Source Toggle */}
           <div className="bg-surface-container-low rounded-xl p-6">
             <h3 className="text-xs uppercase tracking-widest font-bold text-on-surface-variant mb-4 flex items-center gap-2">
+              <span className="material-symbols-outlined text-sm">database</span>
+              Data Source
+            </h3>
+            <div className="flex rounded-lg bg-surface-container-highest p-1 mb-4">
+              {(["csv", "yahoo"] as const).map((src) => (
+                <button
+                  key={src}
+                  onClick={() => switchSource(src)}
+                  className={`flex-1 py-2 rounded-md text-[10px] font-bold uppercase tracking-widest transition-all ${
+                    dataSource === src
+                      ? "bg-surface-container-lowest text-primary shadow-sm"
+                      : "text-on-surface-variant hover:text-on-surface"
+                  }`}
+                >
+                  {src === "csv" ? "Course Data" : "Yahoo Finance"}
+                </button>
+              ))}
+            </div>
+
+            {/* Symbol selection */}
+            <h3 className="text-xs uppercase tracking-widest font-bold text-on-surface-variant mb-3 flex items-center gap-2">
               <span className="material-symbols-outlined text-sm">search</span>
               Symbol
             </h3>
-            <div className="relative">
-              <select
-                value={symbol}
-                onChange={(e) => setSymbol(e.target.value)}
-                className="w-full bg-surface-container-highest border-none rounded-xl py-3 px-4 text-sm font-mono font-medium appearance-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
-              >
-                {symbols.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
-              <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant">
-                expand_more
-              </span>
-            </div>
+            {dataSource === "csv" ? (
+              <div className="relative">
+                <select
+                  value={symbol}
+                  onChange={(e) => setSymbol(e.target.value)}
+                  className="w-full bg-surface-container-highest border-none rounded-xl py-3 px-4 text-sm font-mono font-medium appearance-none focus:ring-2 focus:ring-primary/30 cursor-pointer"
+                >
+                  {symbols.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+                <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-on-surface-variant">
+                  expand_more
+                </span>
+              </div>
+            ) : (
+              <div className="relative">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search ticker (e.g. AAPL)"
+                  className="w-full bg-surface-container-highest border-none rounded-xl py-3 px-4 text-sm font-mono font-medium focus:ring-2 focus:ring-primary/30 placeholder:text-on-surface-variant/40"
+                />
+                {searching && (
+                  <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant/40 animate-spin text-sm">
+                    progress_activity
+                  </span>
+                )}
+                {searchResults.length > 0 && (
+                  <div className="absolute z-10 top-full mt-1 left-0 right-0 bg-surface-container-lowest rounded-xl shadow-lg border border-outline-variant/10 overflow-hidden">
+                    {searchResults.map((r) => (
+                      <button
+                        key={r.symbol}
+                        onClick={() => {
+                          setSymbol(r.symbol);
+                          setSearchQuery("");
+                          setSearchResults([]);
+                        }}
+                        className="w-full text-left px-4 py-2.5 hover:bg-surface-container-low transition-colors flex items-center justify-between"
+                      >
+                        <span className="text-sm font-mono font-bold text-on-surface">
+                          {r.symbol}
+                        </span>
+                        <span className="text-[10px] text-on-surface-variant truncate ml-2 max-w-[120px]">
+                          {r.name}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {symbol && dataSource === "yahoo" && (
+                  <p className="text-[10px] font-mono text-on-surface-variant mt-2">
+                    Selected: <strong className="text-primary">{symbol}</strong>
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Date Range */}

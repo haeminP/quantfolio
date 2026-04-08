@@ -49,16 +49,27 @@ def get_bag_learner():
     return BagLearner
 
 
-def load_prices(symbol: str, sd: datetime, ed: datetime) -> pd.Series:
-    """Load price data for a symbol from local CSV files."""
-    csv_path = ML4T_DATA_DIR / f"{symbol}.csv"
-    if not csv_path.exists():
-        raise FileNotFoundError(f"No data for symbol: {symbol}")
+def load_prices(symbol: str, sd: datetime, ed: datetime, source: str = "auto") -> pd.Series:
+    """Load price data. source='auto' tries local CSV first, then Yahoo Finance.
+    source='csv' forces local only, source='yahoo' forces Yahoo Finance only."""
+    if source in ("auto", "csv"):
+        csv_path = ML4T_DATA_DIR / f"{symbol}.csv"
+        if csv_path.exists():
+            df = pd.read_csv(csv_path, index_col="Date", parse_dates=True)
+            df = df.sort_index()
+            df = df.loc[sd:ed]
+            if not df.empty:
+                return df["Adj Close"]
+        if source == "csv":
+            raise FileNotFoundError(f"No local data for symbol: {symbol}")
 
-    df = pd.read_csv(csv_path, index_col="Date", parse_dates=True)
-    df = df.sort_index()
-    df = df.loc[sd:ed]
-    return df["Adj Close"]
+    # Fallback (or explicit): Yahoo Finance
+    import yfinance as yf
+    ticker = yf.Ticker(symbol)
+    df = ticker.history(start=sd.strftime("%Y-%m-%d"), end=ed.strftime("%Y-%m-%d"))
+    if df.empty:
+        raise FileNotFoundError(f"No data found for {symbol} from Yahoo Finance")
+    return df["Close"]
 
 
 def create_indicators(prices: pd.Series):
